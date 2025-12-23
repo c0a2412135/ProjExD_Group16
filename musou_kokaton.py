@@ -173,12 +173,6 @@ class Beam(pg.sprite.Sprite):
         self.speed = 10
 
     def update(self):
-        self.rect.move_ip(self.speed*self.vx, self.speed*self.vy)
-        if check_bound(self.rect) != (True, True):
-            self.kill()
-
-
-    def update(self):
         """
         ビームを速度ベクトルself.vx, self.vyに基づき移動させる
         引数 screen：画面Surface
@@ -271,6 +265,22 @@ class Enemy(pg.sprite.Sprite):
 #         self.image = self.font.render(f"Score: {self.value}", 0, self.color)
 #         screen.blit(self.image, self.rect)
 
+class Heal(pg.sprite.Sprite):
+    """
+    回復アイテムに関するクラス
+    """
+    def __init__(self):
+        super().__init__()
+        self.image = pg.Surface((30, 30))
+        self.image.fill((0, 255, 0))  # 緑色
+        self.rect = self.image.get_rect() 
+        self.rect.center = random.randint(0, WIDTH), 0 
+        self.vy = 4
+
+    def update(self):
+        self.rect.move_ip(0, self.vy)
+        if self.rect.top > HEIGHT:
+            self.kill()
 def nearest_enemy(bird: Bird, emys: pg.sprite.Group) -> Enemy | None:
     """
     最も近い敵を探す関数
@@ -289,9 +299,13 @@ def main():
     bird = Bird(3, (330, 600))
     bombs = pg.sprite.Group()
     beams = pg.sprite.Group()
-    exps = pg.sprite.Group()
+    exps = pg.sprite.Group() 
     emys = pg.sprite.Group()
-    clock = pg.time.Clock()
+    heals = pg.sprite.Group()
+
+
+    tmr = 0
+    clock = pg.time.Clock() 
     tmr = 0
     AUTO_FIRE_INTERVAL = 30  # 発射速度、増やすと発射間隔が開く
 
@@ -319,6 +333,9 @@ def main():
         if tmr%50 == 0:  # 200フレームに1回，敵機を出現させる
             emys.add(Enemy())
 
+        if tmr % 500 == 0: # 500フレームに1回，回復アイテムを出現させる
+            heals.add(Heal())
+
         for emy in emys:
             if emy.rect.centery >= emy.bound and tmr % emy.interval == 0: 
                 bombs.add(Bomb(emy, bird))
@@ -332,12 +349,37 @@ def main():
             exps.add(Explosion(bomb, 50))  # 爆発エフェクト
             # score.value += 1  # 1点アップ
 
-        for bomb in pg.sprite.spritecollide(bird, bombs, True):  # こうかとんと衝突した爆弾リスト
-            bird.change_img(8, screen)  # こうかとん悲しみエフェクト
-            # score.update(screen)
-            pg.display.update()
-            time.sleep(2)
-            return
+        for bomb in pg.sprite.spritecollide(bird, bombs, True):
+            if bird.state != "hyper":          # 無敵でなければ
+                bird.hp -= bomb.power          # ダメージ
+                bird.state = "hyper"           # 無敵化
+                bird.hyper_life = 60           # 60フレーム無敵
+                bird.change_img(8, screen)     # こうかとん悲しみエフェクト
+
+            if bird.hp <= 0:
+                pg.display.update()
+                time.sleep(2)
+                return
+
+        for emy in pg.sprite.spritecollide(bird, emys, True):
+            if bird.state != "hyper":         # 無敵でなければ
+                bird.hp -= 30                 # ダメージ
+                bird.state = "hyper"          # 無敵化
+                bird.hyper_life = 60          # 60フレーム無敵
+                bird.change_img(8, screen)    # こうかとん悲しみエフェクト
+
+            if bird.hp <= 0:
+                pg.display.update()
+                time.sleep(2)
+                return
+
+
+
+        for heal in pg.sprite.spritecollide(bird, heals, True):
+            heal_amount = int(bird.max_hp * 0.3)   # 最大HPの30%
+            bird.hp = min(bird.max_hp, bird.hp + heal_amount)
+            exps.add(DamageText(heal_amount, bird.rect.center, color=(0, 255, 0)))
+
 
         bird.update(key_lst, screen)
         beams.update()
@@ -348,6 +390,8 @@ def main():
         bombs.draw(screen)
         exps.update()
         exps.draw(screen)
+        heals.update()
+        heals.draw(screen)
         # score.update(screen)
         pg.display.update()
         tmr += 1
