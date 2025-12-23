@@ -5,9 +5,9 @@ import sys
 import time
 import pygame as pg
 
-# ゲームウィンドウのサイズ設定
-WIDTH, HEIGHT = 1100, 650
-# カレントディレクトリをスクリプトの場所に固定（画像読み込み失敗防止）
+
+WIDTH = 650  # ゲームウィンドウの幅
+HEIGHT = 750  # ゲームウィンドウの高さ
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 def check_bound(obj_rct: pg.Rect) -> tuple[bool, bool]:
@@ -36,7 +36,12 @@ class Bird(pg.sprite.Sprite):
     プレイヤーキャラクター（こうかとん）を制御するクラス
     移動、HP管理、無敵時間の処理を担当する
     """
-    delta = {pg.K_UP: (0, -1), pg.K_DOWN: (0, +1), pg.K_LEFT: (-1, 0), pg.K_RIGHT: (+1, 0)}
+    delta = {  # 押下キーと移動量の辞書
+        pg.K_w: (0, -1),
+        pg.K_s: (0, +1),
+        pg.K_a: (-1, 0),
+        pg.K_d: (+1, 0),
+    }
 
     def __init__(self, num: int, xy: tuple[int, int]):
         """
@@ -63,6 +68,15 @@ class Bird(pg.sprite.Sprite):
         self.state = "normal" # 状態（normal/hyper）
         self.hyper_life = 0   # 無敵の残り時間（フレーム数）
 
+    def change_img(self, num: int, screen: pg.Surface):
+        """
+        こうかとんの画像を一時的に変更する（喜び・悲しみエフェクト用）
+        """
+        self.image = pg.transform.rotozoom(
+            pg.image.load(f"fig/{num}.png"), 0, 0.9
+        )
+        screen.blit(self.image, self.rect)
+
     def draw_hp_bar(self, screen: pg.Surface):
         """こうかとんの頭上にHPバーを描画する"""
         bar_w, bar_h = 80, 10
@@ -73,7 +87,7 @@ class Bird(pg.sprite.Sprite):
             pg.draw.rect(screen, (0, 255, 0), [self.rect.centerx - bar_w//2, self.rect.top - 20, int(bar_w * (self.hp/self.max_hp)), bar_h])
         # 白い枠線
         pg.draw.rect(screen, (255, 255, 255), [self.rect.centerx - bar_w//2, self.rect.top - 20, bar_w, bar_h], 1)
-
+    
     def update(self, key_lst: list[bool], screen: pg.Surface):
         """
         こうかとんの移動と無敵状態の更新を行う
@@ -130,20 +144,74 @@ class Beam(pg.sprite.Sprite):
     """
     こうかとんが放つビームに関するクラス
     """
-    def __init__(self, bird: Bird):
-        """ビームをこうかとんの向いている方向へ生成する"""
+    def __init__(self, bird: Bird, dire: tuple[float, float] | None = None):
+        """
+        ビーム画像Surfaceを生成する
+        引数 bird：ビームを放つこうかとん
+        引数 dire：発射方向ベクトル (vx, vy)。Noneならbird.direを使う
+        """
         super().__init__()
-        self.vx, self.vy = bird.dire
+
+        if dire is None:
+            vx, vy = bird.dire
+        else:
+            vx, vy = dire
+
+        # 正規化（ゼロ除算対策）
+        norm = math.sqrt(vx*vx + vy*vy)
+        if norm == 0:
+            vx, vy = 1.0, 0.0
+            norm = 1.0
+        self.vx, self.vy = vx / norm, vy / norm
+
         angle = math.degrees(math.atan2(-self.vy, self.vx))
-        self.image = pg.transform.rotozoom(pg.image.load(f"fig/beam.png"), angle, 1.0)
-        self.vx, self.vy = math.cos(math.radians(angle)), -math.sin(math.radians(angle))
-        self.rect = self.image.get_rect(center=(bird.rect.centerx + bird.rect.width*self.vx, bird.rect.centery + bird.rect.height*self.vy))
+        self.image = pg.transform.rotozoom(pg.image.load(f"fig/star.png"), angle, 1.0)
+
+        self.rect = self.image.get_rect()
+        self.rect.centery = bird.rect.centery + bird.rect.height * self.vy
+        self.rect.centerx = bird.rect.centerx + bird.rect.width * self.vx
         self.speed = 10
 
     def update(self):
-        """ビームを移動させ、画面外に出たら削除する"""
+        self.rect.move_ip(self.speed*self.vx, self.speed*self.vy)
+        if check_bound(self.rect) != (True, True):
+            self.kill()
+
+
+    def update(self):
+        """
+        ビームを速度ベクトルself.vx, self.vyに基づき移動させる
+        引数 screen：画面Surface
+        """
         self.rect.move_ip(self.speed*self.vx, self.speed*self.vy)
         if check_bound(self.rect) != (True, True): self.kill()
+
+class Explosion(pg.sprite.Sprite):
+    """
+    爆発に関するクラス
+    """
+    def __init__(self, obj: "Bomb|Enemy", life: int):
+        """
+        爆弾が爆発するエフェクトを生成する
+        引数1 obj：爆発するBombまたは敵機インスタンス
+        引数2 life：爆発時間
+        """
+        super().__init__()
+        img = pg.image.load(f"fig/explosion.gif")
+        self.imgs = [img, pg.transform.flip(img, 1, 1)]
+        self.image = self.imgs[0]
+        self.rect = self.image.get_rect(center=obj.rect.center)
+        self.life = life
+
+    def update(self):
+        """
+        爆発時間を1減算した爆発経過時間_lifeに応じて爆発画像を切り替えることで
+        爆発エフェクトを表現する
+        """
+        self.life -= 1
+        self.image = self.imgs[self.life//10%2]
+        if self.life < 0:
+            self.kill()
 
 class DamageText(pg.sprite.Sprite):
     """
@@ -166,65 +234,121 @@ class Enemy(pg.sprite.Sprite):
     def __init__(self):
         super().__init__()
         self.image = pg.transform.rotozoom(random.choice(__class__.imgs), 0, 0.8)
-        self.rect = self.image.get_rect(center=(random.randint(0, WIDTH), 0))
-        self.vy, self.bound = 6, random.randint(50, HEIGHT//2) # 停止位置まで降下
-        self.interval = random.randint(50, 150) # 攻撃の間隔
-        self.hp = 30
-    def update(self, screen: pg.Surface):
-        """敵機を降下させ、停止位置に到達したらHPバーを表示する"""
-        if self.rect.centery < self.bound: self.rect.y += self.vy
-        pg.draw.rect(screen, (255, 0, 0), [self.rect.centerx-25, self.rect.top-10, 50, 5])
-        pg.draw.rect(screen, (0, 255, 0), [self.rect.centerx-25, self.rect.top-10, int(50*(self.hp/30)), 5])
+        self.rect = self.image.get_rect()
+        self.rect.center = random.randint(0, WIDTH), 0
+        self.vx, self.vy = 0, +6
+        self.bound = random.randint(50, HEIGHT//2)  # 停止位置
+        self.state = "down"  # 降下状態or停止状態
+        self.interval = random.randint(50, 300)  # 爆弾投下インターバル
+
+    def update(self):
+        """
+        敵機を速度ベクトルself.vyに基づき移動（降下）させる
+        ランダムに決めた停止位置_boundまで降下したら，_stateを停止状態に変更する
+        引数 screen：画面Surface
+        """
+        if self.rect.centery > self.bound:
+            self.vy = 0
+            self.state = "stop"
+        self.rect.move_ip(self.vx, self.vy)
+
+
+# class Score:
+#     """
+#     打ち落とした爆弾，敵機の数をスコアとして表示するクラス
+#     爆弾：1点
+#     敵機：10点
+#     """
+#     def __init__(self):
+#         self.font = pg.font.Font(None, 50)
+#         self.color = (0, 0, 255)
+#         self.value = 0
+#         self.image = self.font.render(f"Score: {self.value}", 0, self.color)
+#         self.rect = self.image.get_rect()
+#         self.rect.center = 100, HEIGHT-50
+
+#     def update(self, screen: pg.Surface):
+#         self.image = self.font.render(f"Score: {self.value}", 0, self.color)
+#         screen.blit(self.image, self.rect)
+
+def nearest_enemy(bird: Bird, emys: pg.sprite.Group) -> Enemy | None:
+    """
+    最も近い敵を探す関数
+    """
+    if len(emys) == 0:
+        return None
+    bx, by = bird.rect.center
+    return min(emys, key=lambda e: (e.rect.centerx - bx)**2 + (e.rect.centery - by)**2)
 
 def main():
-    """
-    メインループ：ゲームの初期化、描画、衝突判定を制御する
-    """
-    pg.display.set_caption("真！こうかとん無双：3ライフ版")
+    pg.display.set_caption("こーかとん伝説")
     screen = pg.display.set_mode((WIDTH, HEIGHT))
     bg_img = pg.image.load(f"fig/pg_bg.jpg")
-    bird = Bird(3, (900, 400))
-    bombs, beams, emys, dmgs = pg.sprite.Group(), pg.sprite.Group(), pg.sprite.Group(), pg.sprite.Group()
-    tmr, clock = 0, pg.time.Clock()
+    # score = Score()
+
+    bird = Bird(3, (330, 600))
+    bombs = pg.sprite.Group()
+    beams = pg.sprite.Group()
+    exps = pg.sprite.Group()
+    emys = pg.sprite.Group()
+    clock = pg.time.Clock()
+    tmr = 0
+    AUTO_FIRE_INTERVAL = 30  # 発射速度、増やすと発射間隔が開く
 
     while True:
-        for event in pg.event.get():
-            if event.type == pg.QUIT: return
-            if event.type == pg.KEYDOWN and event.key == pg.K_SPACE: beams.add(Beam(bird))
-        
+        key_lst = pg.key.get_pressed()
+        manual_input = any(key_lst[k] for k in Bird.delta.keys()) or key_lst[pg.K_SPACE]
+        for event in pg.event.get():  # キー入力がないとき弾を発射する
+            if event.type == pg.QUIT:
+                return 0
+            if event.type == pg.KEYDOWN:
+                manual_input = True
+                if event.key == pg.K_SPACE:
+                    beams.add(Beam(bird))
+
         screen.blit(bg_img, [0, 0])
-        
-        # 敵の生成
-        if tmr % 150 == 0: emys.add(Enemy())
-        
-        # 敵の攻撃
+
+        # 弾の自動発射
+        if not manual_input and tmr % AUTO_FIRE_INTERVAL == 0:
+            target = nearest_enemy(bird, emys)
+            if target is not None:
+                dx = target.rect.centerx - bird.rect.centerx
+                dy = target.rect.centery - bird.rect.centery
+                beams.add(Beam(bird, (dx, dy)))
+
+        if tmr%50 == 0:  # 200フレームに1回，敵機を出現させる
+            emys.add(Enemy())
+
         for emy in emys:
             if emy.rect.centery >= emy.bound and tmr % emy.interval == 0: 
                 bombs.add(Bomb(emy, bird))
 
-        # ビーム vs 敵 の衝突判定
-        for emy in pg.sprite.groupcollide(emys, beams, False, True).keys():
-            emy.hp -= 10
-            dmgs.add(DamageText(10, emy.rect.center, (255, 255, 0)))
-            if emy.hp <= 0: emy.kill()
+        for emy in pg.sprite.groupcollide(emys, beams, True, True).keys():  # ビームと衝突した敵機リスト
+            exps.add(Explosion(emy, 100))  # 爆発エフェクト
+            # score.value += 10  # 10点アップ
+            bird.change_img(6, screen)  # こうかとん喜びエフェクト
 
-        # 爆弾 vs こうかとん の衝突判定
-        if bird.state == "normal": # 無敵時間中でなければ判定
-            bomb_hits = pg.sprite.spritecollide(bird, bombs, True)
-            if bomb_hits: # 1個以上当たった場合
-                bird.hp -= 34 # ダメージを与える（複数が重なっていても1フレームに34のみ）
-                bird.state, bird.hyper_life = "hyper", 60 # 60フレーム(1.2秒)の無敵開始
-                dmgs.add(DamageText(34, bird.rect.center))
-                if bird.hp <= 0: # 死亡判定
-                    time.sleep(1); return
+        for bomb in pg.sprite.groupcollide(bombs, beams, True, True).keys():  # ビームと衝突した爆弾リスト
+            exps.add(Explosion(bomb, 50))  # 爆発エフェクト
+            # score.value += 1  # 1点アップ
 
-        # 各スプライトの更新と描画
-        bird.update(pg.key.get_pressed(), screen)
-        beams.update(); beams.draw(screen)
-        emys.update(screen); emys.draw(screen)
-        bombs.update(); bombs.draw(screen)
-        dmgs.update(); dmgs.draw(screen)
-        
+        for bomb in pg.sprite.spritecollide(bird, bombs, True):  # こうかとんと衝突した爆弾リスト
+            bird.change_img(8, screen)  # こうかとん悲しみエフェクト
+            # score.update(screen)
+            pg.display.update()
+            time.sleep(2)
+            return
+
+        bird.update(key_lst, screen)
+        beams.update()
+        beams.draw(screen)
+        emys.update()
+        emys.draw(screen)
+        bombs.update()
+        bombs.draw(screen)
+        exps.update()
+        exps.draw(screen)
+        # score.update(screen)
         pg.display.update()
         tmr += 1
         clock.tick(50) # 50 FPSに固定
